@@ -1,0 +1,47 @@
+#!/bin/sh
+
+BASEDIR="$(cd `dirname $0`; pwd)"
+
+
+git diff --cached --name-only | while read file
+do
+	if [[ -e "$file" ]]	# Git diff also presents deleted files, we can't analyze them
+	then
+		for script in $(ls $BASEDIR/pre-commits/)
+		do
+			if ! $BASEDIR/pre-commits/$script "$file"
+			then
+				echo
+				echo "[41m ⚠ Commit prevented because of the problems above [0m"
+				exit 1 # this `exit` break the while
+			fi
+		done
+	fi
+
+done || exit 1 # this `exit` break the whole script
+
+# Check the bundle consistency
+
+version=$(cat .ruby-version)
+gemset=$(cat .ruby-gemset)
+version_gemset="${version}@${gemset}"
+
+md5_before=$(md5 -q Gemfile.lock)
+
+PATH=$PATH:~/.rvm/bin		# standard rvm install
+PATH=$PATH:/usr/local/bin	# if rbenv is installed with brew
+[[ -r '/opt/boxen/env.sh' ]] && source '/opt/boxen/env.sh' # if rbenv is installed with boxen
+
+if ! ((which -s rvm && rvm $version_gemset do bundle check) || (which -s rbenv && rbenv exec bundle check))	# -s = silent, do not output if exec exists
+then
+	echo 'Some gems are missing. You should install them with `bundle install` prior to committing, so that your Gemfile.lock is up-to-date.'
+	exit 1
+fi
+
+md5_after=$(md5 -q Gemfile.lock)
+
+if [[ "$md5_before" != "$md5_after" ]]
+then
+	echo 'Your Gemfile and Gemfile.lock specifications are inconsistent. You should `bundle install` prior to committing, so that your Gemfile.lock is up-to-date.'
+	exit 1
+fi
